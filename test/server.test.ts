@@ -96,13 +96,17 @@ describe("MCP server integration", () => {
     expect(serverInfo?.name).toBe("test-server");
   });
 
-  it("list_schemas returns both schemas", async () => {
+  it("list_schemas returns all schemas with format", async () => {
     const responses = await mcpSession([callTool(1, "list_schemas")]);
-    const result = parseContent(responses[1]) as Array<{ name: string; definitionCount: number }>;
+    const result = parseContent(responses[1]) as Array<{ name: string; format: string; definitionCount: number }>;
     const names = result.map((s) => s.name).sort();
-    expect(names).toEqual(["order", "user"]);
+    expect(names).toEqual(["order", "petstore", "user"]);
     expect(result.find((s) => s.name === "order")!.definitionCount).toBe(3);
+    expect(result.find((s) => s.name === "order")!.format).toBe("json-schema");
     expect(result.find((s) => s.name === "user")!.definitionCount).toBe(3);
+    expect(result.find((s) => s.name === "petstore")!.format).toBe("openapi-3");
+    // 2 component schemas + 3 path operations
+    expect(result.find((s) => s.name === "petstore")!.definitionCount).toBe(5);
   });
 
   it("list_definitions returns definition summaries", async () => {

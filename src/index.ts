@@ -3,14 +3,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { indexSchemas, searchInSchema, type SearchHit } from "./lib.js";
+import { indexSources, searchInSchema, type SearchHit } from "./lib.js";
 
 // --- CLI args ---
 
 interface CliArgs {
   name: string;
   description: string;
-  schemasDir: string;
+  sources: string[];
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -36,15 +36,19 @@ function parseArgs(argv: string[]): CliArgs {
     }
   }
 
-  if (positional.length !== 1) {
+  if (positional.length === 0) {
     console.error(USAGE);
     process.exit(1);
   }
 
-  return { name, description, schemasDir: positional[0] };
+  return { name, description, sources: positional };
 }
 
-const USAGE = `Usage: json-schema-mcp [options] <schemas-directory>
+const USAGE = `Usage: json-schema-mcp [options] <source...>
+
+  Each <source> can be a local directory or an HTTP(S) URL.
+  Multiple sources are merged into a single index.
+  JSON Schema and OpenAPI (3.x / Swagger 2.0) files are auto-detected.
 
 Options:
   -n, --name <name>            Server name shown to the agent
@@ -54,7 +58,7 @@ Options:
 // --- Server setup ---
 
 const cli = parseArgs(process.argv);
-const schemas = await indexSchemas(cli.schemasDir);
+const schemas = await indexSources(cli.sources);
 
 // Prefix tool descriptions with context when provided
 const ctx = cli.description ? `[${cli.description}] ` : "";
@@ -73,11 +77,12 @@ function err(msg: string) {
 }
 
 server.registerTool("list_schemas", {
-  description: `${ctx}List all indexed JSON schema files with their titles and definition counts`,
+  description: `${ctx}List all indexed schema files (JSON Schema and OpenAPI) with their format, titles, and definition counts`,
 }, () => {
   const items = [...schemas.entries()].map(([name, s]) => ({
     name,
     filename: s.filename,
+    format: s.format,
     title: s.title ?? null,
     description: s.description ?? null,
     definitionCount: s.definitions.size,
@@ -88,7 +93,7 @@ server.registerTool("list_schemas", {
 const schemaParam = { schema: z.string().describe("Schema name (filename without .json)") };
 
 server.registerTool("list_definitions", {
-  description: `${ctx}List all definition names in a specific schema`,
+  description: `${ctx}List all definition names in a schema. For OpenAPI specs this includes both component schemas and path operations (e.g. "GET /pets")`,
   inputSchema: schemaParam,
 }, ({ schema: schemaName }) => {
   const s = schemas.get(schemaName);
@@ -102,7 +107,7 @@ server.registerTool("list_definitions", {
 });
 
 server.registerTool("get_definition", {
-  description: `${ctx}Get the full JSON schema of a specific definition`,
+  description: `${ctx}Get the full JSON schema of a specific definition or OpenAPI operation`,
   inputSchema: {
     schema: z.string().describe("Schema name (filename without .json)"),
     definition: z.string().describe("Definition name"),
@@ -116,10 +121,10 @@ server.registerTool("get_definition", {
 });
 
 server.registerTool("search_definitions", {
-  description: `${ctx}Search definitions by keyword within a specific schema`,
+  description: `${ctx}Search definitions by keyword within a specific schema. Supports glob patterns (* and ?) and pipe (|) as OR separator, e.g. "GET*|POST*" or "user|account"`,
   inputSchema: {
     schema: z.string().describe("Schema name (filename without .json)"),
-    keyword: z.string().describe("Search keyword"),
+    keyword: z.string().describe("Search expression: plain keyword, glob pattern (* ?), or pipe-separated alternatives"),
   },
 }, ({ schema: schemaName, keyword }) => {
   const s = schemas.get(schemaName);
@@ -128,8 +133,8 @@ server.registerTool("search_definitions", {
 });
 
 server.registerTool("search_all", {
-  description: `${ctx}Search definitions by keyword across all schemas`,
-  inputSchema: { keyword: z.string().describe("Search keyword") },
+  description: `${ctx}Search definitions by keyword across all schemas. Supports glob patterns (* and ?) and pipe (|) as OR separator, e.g. "GET*|POST*" or "user|account"`,
+  inputSchema: { keyword: z.string().describe("Search expression: plain keyword, glob pattern (* ?), or pipe-separated alternatives") },
 }, ({ keyword }) => {
   const hits: SearchHit[] = [];
   for (const [name, s] of schemas) {
